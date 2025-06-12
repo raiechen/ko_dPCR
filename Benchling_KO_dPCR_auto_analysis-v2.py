@@ -61,10 +61,10 @@ Ref_lot_non_edit_min = 95
 
 
 # Set the title of the Streamlit app
-st.title("TRAC/TRBC2/TGFBR2/TRBC2-9 KO dPCR Analysis App")
+st.title("TRAC/TRBC2/TGFBR2/TRBC2-9/CBLB KO dPCR Analysis App")
 
 # Add a dropdown for target selection
-target_options = ['Select a Target','TGFBR2-LNA', 'TRAC-LNA', 'TRBC2-LNA', 'TRBC2-9-LNA']
+target_options = ['Select a Target','TGFBR2-LNA', 'TRAC-LNA', 'TRBC2-LNA', 'TRBC2-9-LNA', 'CBLB-LNA']
 selected_target = st.selectbox("Select the Target for Analysis:", target_options)
 
 # Check if the user has selected a valid target
