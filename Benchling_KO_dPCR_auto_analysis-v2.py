@@ -21,9 +21,11 @@ def load_data(uploaded_file):
             delimiter = first_line_str.split("=")[1]
             
             df = pd.read_csv(file_buffer, sep=delimiter, skiprows=1, header=0, encoding='utf-8-sig')
+            st.success("v3 csv uploaded")
         else:
             
             df = pd.read_csv(file_buffer, header=0, encoding='utf-8-sig')
+            
         
         return df
 
@@ -39,9 +41,11 @@ def load_data(uploaded_file):
             delimiter = first_line_str.split("=")[1]
             
             df = pd.read_csv(file_buffer, sep=delimiter, skiprows=1, header=0, encoding='latin-1')
+            
         else:
             
             df = pd.read_csv(file_buffer, header=0, encoding='latin-1')
+            st.success("v2 csv uploaded")
         
         return df
 
