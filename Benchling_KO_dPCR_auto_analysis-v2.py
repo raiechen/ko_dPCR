@@ -109,6 +109,14 @@ if uploaded_file is not None:
         # Check if any of the new format's columns are present
         if any(col in df.columns for col in column_mapping.keys()):
             
+            # For v3 format, multiply CI by 100 and format as string with '%'
+            if 'CI (95%) (dPCR reaction)' in df.columns:
+                # Convert to numeric, coercing errors to NaN
+                numeric_ci = pd.to_numeric(df['CI (95%) (dPCR reaction)'], errors='coerce')
+                
+                # Multiply by 100, then format as a string with '%', handling NaNs gracefully.
+                df['CI (95%) (dPCR reaction)'] = (numeric_ci * 100).apply(lambda x: f"{x:.2f}%" if pd.notna(x) else '')
+
             df.rename(columns=column_mapping, inplace=True)
             # In the new format, some data is spread across rows. Forward fill the 'Sample/NTC/Control' column.
             df['Sample/NTC/Control'] = df['Sample/NTC/Control'].ffill()
