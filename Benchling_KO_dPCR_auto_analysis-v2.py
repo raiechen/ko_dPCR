@@ -65,7 +65,7 @@ Ref_lot_non_edit_min = 95
 
 
 # Set the title of the Streamlit app
-st.title("TRAC/TRBC2/TGFBR2/TRBC2-9/CBLB KO dPCR Analysis App beta 0.1")
+st.title("TRAC/TRBC2/TGFBR2/TRBC2-9/CBLB KO dPCR Analysis App")
 
 # Add a dropdown for target selection
 target_options = ['Select a Target','TGFBR2-LNA', 'TRAC-LNA', 'TRBC2-LNA', 'TRBC2-9-LNA', 'CBLB-LNA']
@@ -115,7 +115,7 @@ if uploaded_file is not None:
                 numeric_ci = pd.to_numeric(df['CI (95%) (dPCR reaction)'], errors='coerce')
                 
                 # Multiply by 100, then format as a string with '%', handling NaNs gracefully.
-                df['CI (95%) (dPCR reaction)'] = (numeric_ci * 100).apply(lambda x: f"{x:.2f}%" if pd.notna(x) else '')
+                df['CI (95%) (dPCR reaction)'] = (numeric_ci * 100).apply(lambda x: f"{x:.2f}%" if pd.notna(x) else '0.00%')
 
             df.rename(columns=column_mapping, inplace=True)
             # In the new format, some data is spread across rows. Forward fill the 'Sample/NTC/Control' column.
@@ -123,13 +123,25 @@ if uploaded_file is not None:
 
         # Ensure required columns exist
         required_columns = ['Sample/NTC/Control', 'Target', 'Conc. [copies/µL]', 'CI (95%)']
-        if not all(col in df.columns for col in required_columns):
-            st.error(f"Missing required columns in the uploaded file: {required_columns}")
-            print(f"Missing required columns in the uploaded file: {required_columns}")
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            st.error(f"Missing required columns in the uploaded file: {missing_columns}")
+            print(f"Missing required columns in the uploaded file: {missing_columns}")
+            st.stop()  # Stop execution if required columns are missing
         else:
             # Filter data for the selected target and 'B2M'
             target_data = df[df['Target'] == selected_target]
             b2m_data = df[df['Target'] == 'B2M']
+            
+            # Check if selected target exists in the data
+            if target_data.empty:
+                st.error(f"Target '{selected_target}' not found in the uploaded file. Please check your target selection or upload a file containing this target.")
+                st.stop()  # Stop execution if target doesn't match
+                
+            # Check if B2M reference data exists
+            if b2m_data.empty:
+                st.error("B2M reference data not found in the uploaded file. Please ensure your file contains B2M target data.")
+                st.stop()  # Stop execution if B2M is missing
 
             # Merge the data on 'Sample/NTC/Control' to align the selected target and B2M rows
             merged_data = pd.merge(
@@ -139,11 +151,16 @@ if uploaded_file is not None:
                 suffixes=(f'_{selected_target}', '_B2M')
             )
 
-            # Calculate %WT
-            merged_data['%WT'] = (
-                (merged_data[f'Conc. [copies/µL]_{selected_target}'] /
-                 merged_data['Conc. [copies/µL]_B2M']) * 100
-            ).round(2)
+            # Calculate %WT with division by zero protection
+            target_conc = pd.to_numeric(merged_data[f'Conc. [copies/µL]_{selected_target}'], errors='coerce')
+            b2m_conc = pd.to_numeric(merged_data['Conc. [copies/µL]_B2M'], errors='coerce')
+            
+            # Handle division by zero and invalid values
+            merged_data['%WT'] = np.where(
+                (b2m_conc > 0) & (target_conc.notna()) & (b2m_conc.notna()),
+                ((target_conc / b2m_conc) * 100).round(2),
+                np.nan
+            )
 
             
             # Create new_df with relevant columns
@@ -158,8 +175,12 @@ if uploaded_file is not None:
                     'Partitions (valid)_B2M': 'Ref Partitions (valid)'
                 }
             )
-            new_df['Target CI (95%)'] = new_df['Target CI (95%)'].str.replace('%', '', regex=False)
-            new_df['Ref CI (95%)'] = new_df['Ref CI (95%)'].str.replace('%', '', regex=False)
+            # Safely convert CI values to float, handling missing or invalid values
+            def safe_float_convert(series):
+                return pd.to_numeric(series.str.replace('%', '', regex=False), errors='coerce').fillna(0.0)
+            
+            new_df['Target CI (95%)'] = safe_float_convert(new_df['Target CI (95%)'])
+            new_df['Ref CI (95%)'] = safe_float_convert(new_df['Ref CI (95%)'])
 
             # Add a new column '%KO' = 100 - '%WT'
             new_df['%KO'] = (100 - new_df['%WT']).round(2)
@@ -167,36 +188,40 @@ if uploaded_file is not None:
             new_df = new_df[new_df['Sample Description'] != 'NTC']
             new_df = new_df[new_df['Sample Description'].str.lower() != 'pdna only']
 
-            # Define conditions for 'Designation'
-            # Define conditions for 'Designation'
+            # Ensure numeric columns are properly typed
+            numeric_columns = ['Target Concentration (copies/µL)', 'Ref Concentration (copies/µL)', 
+                             'Target Partitions (valid)', 'Ref Partitions (valid)']
+            for col in numeric_columns:
+                new_df[col] = pd.to_numeric(new_df[col], errors='coerce').fillna(0)
+
+            # Define conditions for 'Designation' with proper NaN handling
             conditions = [
                 # Condition for 'D'
                 (
-                    (new_df['Target CI (95%)'].astype(float) <= Max_CI_selected_target) &
-                    (new_df['Ref CI (95%)'].astype(float) <= Max_CI_B2M) &
+                    (new_df['Target CI (95%)'] <= Max_CI_selected_target) &
+                    (new_df['Ref CI (95%)'] <= Max_CI_B2M) &
                     (new_df['Target Concentration (copies/µL)'] >= LLOQ_selected_target) &
                     (new_df['Target Partitions (valid)'] >= Min_valid_part_selected_target) &
                     (new_df['Ref Partitions (valid)'] >= Min_valid_part_B2M) &
+                    (new_df['%WT'].notna()) &  # Ensure %WT is not NaN
                     (~np.isinf(new_df['%WT']))  # Ensure %WT is not infinity
-
-                    
                 ),
                 # Condition for 'NQ'
                 (
-                    (new_df['Ref CI (95%)'].astype(float) <= Max_CI_B2M) &
+                    (new_df['Ref CI (95%)'] <= Max_CI_B2M) &
                     (new_df['Target Concentration (copies/µL)'] < LLOQ_selected_target) &
                     (new_df['Target Partitions (valid)'] >= Min_valid_part_selected_target) &
                     (new_df['Ref Partitions (valid)'] >= Min_valid_part_B2M) &
+                    (new_df['%WT'].notna()) &  # Ensure %WT is not NaN
                     (~np.isinf(new_df['%WT']))  # Ensure %WT is not infinity
-
                 ),
                 # Condition for 'UND'
                 (
-                    (new_df['Ref CI (95%)'].astype(float) > Max_CI_B2M) |
+                    (new_df['Ref CI (95%)'] > Max_CI_B2M) |
                     (new_df['Target Partitions (valid)'] < Min_valid_part_selected_target) |
                     (new_df['Ref Partitions (valid)'] < Min_valid_part_B2M) |
-                    (np.isinf(new_df['%WT']))  # Add condition for %WT being infinity
-
+                    (new_df['%WT'].isna()) |  # Include NaN check
+                    (np.isinf(new_df['%WT']))  # Include infinity check
                 )
             ]
 
@@ -219,14 +244,18 @@ if uploaded_file is not None:
             # Check assay acceptance criteria for NTC
             ntc_data = df[df['Sample/NTC/Control'] == 'NTC']  # Filter rows where 'Sample/NTC/Control' is 'NTC'
 
+            assay_passes = False
             if not ntc_data.empty:
-                # Check if 'Partitions (positive)' <= 10 for all NTC rows
-                if ntc_data['Partitions (positive)'].max() <= 10:
-                    # Assay passes
-                    st.info("Assay Status: Pass", icon="✅")  # Green highlight
+                # Check if 'Partitions (positive)' column exists and has valid data
+                if 'Partitions (positive)' in ntc_data.columns:
+                    positive_partitions = pd.to_numeric(ntc_data['Partitions (positive)'], errors='coerce')
+                    if positive_partitions.max() <= 10:
+                        assay_passes = True
+                        st.info("Assay Status: Pass", icon="✅")  # Green highlight
+                    else:
+                        st.error("Assay Status: Fail", icon="❌")  # Red highlight
                 else:
-                    # Assay fails
-                    st.error("Assay Status: Fail", icon="❌")  # Red highlight
+                    st.warning("'Partitions (positive)' column not found. Cannot determine assay status.")
             else:
                 st.warning("No NTC data found in the uploaded file.")
             
@@ -248,15 +277,25 @@ if uploaded_file is not None:
             if st.button("Export as Excel Report"):
                 try:
                     # Add assay status to the report
-                    ntc_data = df[df['Sample/NTC/Control'] == 'NTC']  # Filter rows where 'Sample/NTC/Control' is 'NTC'
-                    if not ntc_data.empty and ntc_data['Partitions (positive)'].max() <= 10:
-                        assay_status = "Pass"
-                    else:
-                        assay_status = "Fail"
+                    ntc_data = df[df['Sample/NTC/Control'] == 'NTC']
+                    assay_status = "Fail"  # Default to fail
+                    
+                    if not ntc_data.empty and 'Partitions (positive)' in ntc_data.columns:
+                        positive_partitions = pd.to_numeric(ntc_data['Partitions (positive)'], errors='coerce')
+                        if positive_partitions.max() <= 10:
+                            assay_status = "Pass"
 
                     # Add assay status as a new row in the report
                     report_df = new_df.copy()
-                    report_df.loc[len(report_df)] = ["Assay Status", assay_status] + [""] * (len(report_df.columns) - 2)
+                    if len(report_df.columns) >= 2:
+                        # Create a new row with proper structure
+                        new_row = ["Assay Status", assay_status] + [""] * (len(report_df.columns) - 2)
+                        report_df.loc[len(report_df)] = new_row
+                    else:
+                        # Fallback if dataframe has fewer than 2 columns
+                        st.error("Cannot create report: insufficient columns")
+                        # Skip the export process for this case
+                        pass  # Skip the rest of the export process
 
                     # Save the DataFrame to an Excel file in memory
                     output = BytesIO()
